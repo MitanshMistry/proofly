@@ -8,3 +8,6 @@ spring:
       ddl-auto: create-drop
   flyway:
     enabled: false
+ledgerly:
+  storage:
+    local-root: ./target/test-ledgerly-files

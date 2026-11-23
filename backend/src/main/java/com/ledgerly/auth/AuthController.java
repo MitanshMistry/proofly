@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.security.web.csrf.CsrfToken;
 import com.ledgerly.project.ProjectRepository;
 import com.ledgerly.storage.LocalReceiptStorage;
+import com.ledgerly.document.PurchaseDocumentRepository;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -35,15 +36,18 @@ public class AuthController {
     private final ReceiptRepository receipts;
     private final ProjectRepository projects;
     private final LocalReceiptStorage storage;
+    private final PurchaseDocumentRepository purchaseDocuments;
 
     public AuthController(UserAccountRepository users, PasswordEncoder passwords, AuthenticationManager authenticationManager,
-                          ReceiptRepository receipts, ProjectRepository projects, LocalReceiptStorage storage) {
+                          ReceiptRepository receipts, ProjectRepository projects, LocalReceiptStorage storage,
+                          PurchaseDocumentRepository purchaseDocuments) {
         this.users = users;
         this.passwords = passwords;
         this.authenticationManager = authenticationManager;
         this.receipts = receipts;
         this.projects = projects;
         this.storage = storage;
+        this.purchaseDocuments = purchaseDocuments;
     }
 
     @GetMapping("/csrf")
@@ -101,6 +105,10 @@ public class AuthController {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Sign in required");
         }
         var ownedReceipts = receipts.findByUserIdOrderByPurchasedAtDesc(account.getId());
+        ownedReceipts.forEach(receipt -> purchaseDocuments.findByReceiptId(receipt.getId()).forEach(document -> {
+            purchaseDocuments.delete(document);
+            storage.delete(document.getObjectKey());
+        }));
         ownedReceipts.forEach(receipt -> storage.delete(receipt.getImageObjectKey()));
         ownedReceipts.forEach(receipts::delete);
         projects.findByUserIdOrderByCreatedAtDesc(account.getId()).forEach(projects::delete);

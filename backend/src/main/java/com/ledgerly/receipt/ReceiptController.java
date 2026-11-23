@@ -32,6 +32,9 @@ import java.time.format.DateTimeParseException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestParam;
+import com.ledgerly.document.PurchaseDocumentRepository;
+import com.ledgerly.history.HistoryEvent;
+import com.ledgerly.history.HistoryEventRepository;
 
 @RestController
 @RequestMapping("/api/receipts")
@@ -39,11 +42,16 @@ public class ReceiptController {
     private final ReceiptRepository repository;
     private final LocalReceiptStorage storage;
     private final ProjectRepository projects;
+    private final PurchaseDocumentRepository purchaseDocuments;
+    private final HistoryEventRepository history;
 
-    public ReceiptController(ReceiptRepository repository, LocalReceiptStorage storage, ProjectRepository projects) {
+    public ReceiptController(ReceiptRepository repository, LocalReceiptStorage storage, ProjectRepository projects,
+                             PurchaseDocumentRepository purchaseDocuments, HistoryEventRepository history) {
         this.repository = repository;
         this.storage = storage;
         this.projects = projects;
+        this.purchaseDocuments = purchaseDocuments;
+        this.history = history;
     }
 
     @GetMapping
@@ -85,7 +93,10 @@ public class ReceiptController {
         receipt.setPurchaseAndWarrantyDetails(request.receiptNumber(), request.productName(), request.brand(),
                 request.modelNumber(), request.serialNumber(), request.sku(), null, "UNKNOWN",
                 null, null, null, null, false);
-        return ReceiptResponse.from(repository.save(receipt));
+        Receipt saved = repository.save(receipt);
+        history.save(new HistoryEvent(account.getId(), saved.getId(), "RECEIPT_CREATED",
+                "Purchase created for " + saved.getNotes()));
+        return ReceiptResponse.from(saved);
     }
 
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
@@ -118,7 +129,10 @@ public class ReceiptController {
         receipt.setImageMetadata(stored.objectKey(), stored.mimeType(), stored.sizeBytes(), stored.sha256());
         receipt.setPurchaseAndWarrantyDetails(receiptNumber, null, null, modelNumber,
                 serialNumber, null, null, "UNKNOWN", null, null, null, null, false);
-        return ReceiptResponse.from(repository.save(receipt));
+        Receipt saved = repository.save(receipt);
+        history.save(new HistoryEvent(account.getId(), saved.getId(), "RECEIPT_UPLOADED",
+                "Purchase evidence uploaded for " + saved.getNotes()));
+        return ReceiptResponse.from(saved);
     }
 
     @GetMapping("/{receiptId}")
@@ -145,7 +159,10 @@ public class ReceiptController {
                 request.serialNumber(), request.sku(), request.quantity(), request.warrantyProvider(),
                 request.warrantyDurationMonths(), request.warrantyStartAt(), request.warrantyEndAt(),
                 request.returnWindowEndAt(), request.warrantyConfirmed());
-        return ReceiptResponse.from(repository.save(receipt));
+        Receipt saved = repository.save(receipt);
+        history.save(new HistoryEvent(account.getId(), saved.getId(), "RECEIPT_UPDATED",
+                "Purchase updated for " + saved.getNotes()));
+        return ReceiptResponse.from(saved);
     }
 
     @DeleteMapping("/{receiptId}")
@@ -154,6 +171,12 @@ public class ReceiptController {
         Receipt receipt = repository.findById(receiptId)
                 .filter(item -> item.getUserId().equals(account.getId()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt not found"));
+        purchaseDocuments.findByReceiptId(receiptId).forEach(document -> {
+            purchaseDocuments.delete(document);
+            storage.delete(document.getObjectKey());
+        });
+        history.save(new HistoryEvent(account.getId(), receipt.getId(), "RECEIPT_DELETED",
+                "Purchase deleted for " + (receipt.getNotes() == null ? "Needs review" : receipt.getNotes())));
         repository.delete(receipt);
         storage.delete(receipt.getImageObjectKey());
     }
@@ -162,6 +185,13 @@ public class ReceiptController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteAll(@AuthenticationPrincipal UserAccount account) {
         var ownedReceipts = repository.findByUserIdOrderByPurchasedAtDesc(account.getId());
+        ownedReceipts.forEach(receipt -> purchaseDocuments.findByReceiptId(receipt.getId()).forEach(document -> {
+            purchaseDocuments.delete(document);
+            storage.delete(document.getObjectKey());
+        }));
+        ownedReceipts.forEach(receipt -> history.save(new HistoryEvent(account.getId(), receipt.getId(),
+                "RECEIPT_DELETED", "Purchase deleted for " +
+                (receipt.getNotes() == null ? "Needs review" : receipt.getNotes()))));
         ownedReceipts.forEach(receipt -> storage.delete(receipt.getImageObjectKey()));
         ownedReceipts.forEach(repository::delete);
     }

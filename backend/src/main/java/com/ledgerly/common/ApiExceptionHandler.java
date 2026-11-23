@@ -9,6 +9,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,6 +31,11 @@ public class ApiExceptionHandler {
     ResponseEntity<Map<String, Object>> status(ResponseStatusException exception) {
         HttpStatus status = HttpStatus.valueOf(exception.getStatusCode().value());
         return response(status, exception.getReason() == null ? "Request could not be completed" : exception.getReason());
+    }
+
+    @ExceptionHandler(BadCredentialsException.class)
+    ResponseEntity<Map<String, Object>> badCredentials(BadCredentialsException exception) {
+        return response(HttpStatus.UNAUTHORIZED, "Email or password is incorrect");
     }
 
     private ResponseEntity<Map<String, Object>> response(HttpStatus status, String message) {

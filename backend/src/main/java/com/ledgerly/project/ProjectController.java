@@ -18,16 +18,20 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+import com.ledgerly.history.HistoryEvent;
+import com.ledgerly.history.HistoryEventRepository;
 
 @RestController
 @RequestMapping("/api/projects")
 public class ProjectController {
     private final ProjectRepository projects;
     private final ReceiptRepository receipts;
+    private final HistoryEventRepository history;
 
-    public ProjectController(ProjectRepository projects, ReceiptRepository receipts) {
+    public ProjectController(ProjectRepository projects, ReceiptRepository receipts, HistoryEventRepository history) {
         this.projects = projects;
         this.receipts = receipts;
+        this.history = history;
     }
 
     @GetMapping
@@ -55,6 +59,8 @@ public class ProjectController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Receipt not found"));
         receipt.setProjectId(project.getId());
         receipts.save(receipt);
+        history.save(new HistoryEvent(account.getId(), receipt.getId(), "COLLECTION_ASSIGNED",
+                "Purchase assigned to collection " + project.getName()));
         var assigned = receipts.findByUserIdOrderByPurchasedAtDesc(account.getId()).stream()
                 .filter(item -> project.getId().equals(item.getProjectId())).toList();
         return ProjectResponse.from(project, assigned);

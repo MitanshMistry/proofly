@@ -11,6 +11,7 @@ import {
   listReceipts, listWarrantyReminders, login, loginDemo, logout,
   register, Receipt, updateReceipt, uploadPurchaseDocument, uploadReceipt
 } from "./api";
+import { demoPurchases } from "./demoData";
 import { recognize } from "tesseract.js";
 
 const navItems = [
@@ -35,6 +36,11 @@ const formatDate = (value: string | null) => {
 };
 
 export function App() {
+  if (import.meta.env.VITE_STATIC_DEMO === "true" || __GITHUB_PAGES__) return <StaticDemoApp />;
+  return <AuthenticatedApp />;
+}
+
+function AuthenticatedApp() {
   const [view, setView] = useState("Dashboard");
   const [query, setQuery] = useState("");
   const [warrantyFilter, setWarrantyFilter] = useState("All");
@@ -192,6 +198,114 @@ function ShieldIcon() {
   return <ShieldCheck size={18} />;
 }
 
+function StaticDemoApp() {
+  const [view, setView] = useState("Dashboard");
+  const [query, setQuery] = useState("");
+  const [warrantyFilter, setWarrantyFilter] = useState("All");
+  const [sort, setSort] = useState("Newest purchase");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const purchases = useMemo(() => {
+    const text = query.trim().toLowerCase();
+    const matching = demoPurchases.filter((purchase) => {
+      const searchable = [
+        purchase.merchantName, purchase.category, purchase.status,
+        purchase.receiptNumber, purchase.productName, purchase.brand,
+        purchase.modelNumber, purchase.serialNumber, purchase.sku
+      ].join(" ").toLowerCase();
+      if (text && !searchable.includes(text)) return false;
+      if (view !== "Dashboard" && warrantyFilter !== "All" &&
+        purchaseWarrantyStatus(purchase) !== warrantyFilter) return false;
+      return true;
+    });
+
+    return [...matching].sort((a, b) => {
+      if (sort === "Oldest purchase") return (a.purchasedAt ?? "").localeCompare(b.purchasedAt ?? "");
+      if (sort === "Warranty ending soon") {
+        return (a.warrantyEndAt ?? "9999-12-31").localeCompare(b.warrantyEndAt ?? "9999-12-31");
+      }
+      if (sort === "Recently edited") return b.id.localeCompare(a.id);
+      return (b.purchasedAt ?? "").localeCompare(a.purchasedAt ?? "");
+    });
+  }, [query, sort, view, warrantyFilter]);
+
+  return (
+    <div className="shell">
+      {mobileMenuOpen && <button className="mobile-backdrop" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)} />}
+      <aside className={`sidebar ${mobileMenuOpen ? "open" : ""}`}>
+        <button className="brand" onClick={() => setView("Dashboard")} aria-label="Proofly dashboard">
+          <span className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M16 3.5l9 3.7v6.9c0 6.1-3.7 11.4-9 14.4-5.3-3-9-8.3-9-14.4V7.2l9-3.7z" fill="none" stroke="currentColor" strokeWidth="2"/>
+              <path d="M11.3 16.2l3.2 3.2 6.7-7.1" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </span><span className="brand-word">Proofly</span>
+        </button>
+        <div className="workspace">
+          <span className="avatar">SD</span>
+          <span><strong>Sample vault</strong><small>Read-only demo</small></span>
+        </div>
+        <nav aria-label="Primary navigation">
+          <p className="nav-label">Sample vault</p>
+          {navItems.slice(0, 3).map(({ name, icon: Icon }) => (
+            <button key={name} className={view === name ? "nav-item active" : "nav-item"} onClick={() => {
+              setView(name);
+              setMobileMenuOpen(false);
+            }}>
+              <Icon size={18} strokeWidth={1.8} /><span>{name}</span>
+              {name === "Purchases" && <span className="nav-count">{demoPurchases.length}</span>}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <div className="privacy-card"><ShieldIcon /><div><strong>Fictional sample data</strong><small>Static, read-only demonstration</small></div></div>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <button className="mobile-menu" onClick={() => setMobileMenuOpen(true)} aria-label="Open menu">☰</button>
+          <label className="global-search">
+            <Search size={17} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search store, invoice, model, serial, or SKU..." />
+          </label>
+          <span className="top-avatar">SD</span>
+        </header>
+
+        <div className="content">
+          <div className="page-heading">
+            <div>
+              <p className="eyebrow">Fictional sample data · Read-only</p>
+              <h1>{view}</h1>
+              <p className="muted">{view === "Dashboard"
+                ? "Explore sample purchases, warranty coverage, and records needing attention."
+                : getViewCopy(view)}</p>
+            </div>
+          </div>
+
+          {view === "Dashboard" && (
+            <DashboardView purchases={demoPurchases} readOnly />
+          )}
+          {(view === "Purchases" || view === "Warranty") && (
+            <PurchaseView
+              view={view}
+              purchases={purchases}
+              loading={false}
+              error={false}
+              query={query}
+              sort={sort}
+              setSort={setSort}
+              warrantyFilter={warrantyFilter}
+              setWarrantyFilter={setWarrantyFilter}
+              readOnly
+            />
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
 function getViewCopy(view: string) {
   const copy: Record<string, string> = {
     Dashboard: "Protect purchases and see exactly what needs attention.",
@@ -226,10 +340,11 @@ function warrantyLabel(status: string) {
   }[status] ?? "Unknown";
 }
 
-function DashboardView({ purchases, onOpenPurchase, onUpload }: {
+function DashboardView({ purchases, onOpenPurchase, onUpload, readOnly = false }: {
   purchases: Receipt[];
-  onOpenPurchase: (purchase: Receipt) => void;
-  onUpload: () => void;
+  onOpenPurchase?: (purchase: Receipt) => void;
+  onUpload?: () => void;
+  readOnly?: boolean;
 }) {
   const active = purchases.filter((item) => purchaseWarrantyStatus(item) === "ACTIVE").length;
   const expiring = purchases.filter((item) => purchaseWarrantyStatus(item) === "EXPIRING_SOON").length;
@@ -250,7 +365,7 @@ function DashboardView({ purchases, onOpenPurchase, onUpload }: {
         <section className="panel recent-panel">
           <div className="panel-header">
             <div><h2>Recent purchases</h2><p>Newest purchase date first</p></div>
-            <button className="panel-action upload-purchase-button" onClick={onUpload}><Plus size={15} /> Add purchase</button>
+            {onUpload && <button className="panel-action upload-purchase-button" onClick={onUpload}><Plus size={15} /> Add purchase</button>}
           </div>
           {recent.length ? recent.map((purchase) => (
             <PurchaseRow key={purchase.id} purchase={purchase} onOpen={onOpenPurchase} />
@@ -259,19 +374,22 @@ function DashboardView({ purchases, onOpenPurchase, onUpload }: {
               <span className="state-icon"><Upload size={22} /></span>
               <strong>No purchases yet</strong>
               <p>Add a purchase to start your proof-of-purchase vault.</p>
-              <button className="primary" onClick={onUpload}>Upload first purchase</button>
+              {onUpload && <button className="primary" onClick={onUpload}>Upload first purchase</button>}
             </div>
           )}
         </section>
         <section className="panel attention-panel">
           <div className="panel-header"><div><h2>Needs attention</h2><p>Incomplete warranty records</p></div></div>
-          {[...purchases].filter((item) => purchaseWarrantyStatus(item) === "UNKNOWN").slice(0, 5).map((purchase) => (
-            <button className="attention-row" key={purchase.id} onClick={() => onOpenPurchase(purchase)}>
+          {[...purchases].filter((item) => purchaseWarrantyStatus(item) === "UNKNOWN").slice(0, 5).map((purchase) => {
+            const content = <>
               <span className="attention-icon">?</span>
               <span><strong>{purchase.productName || purchase.merchantName}</strong><small>Add warranty or product details</small></span>
-              <span>›</span>
-            </button>
-          ))}
+              {!readOnly && <span>›</span>}
+            </>;
+            return onOpenPurchase
+              ? <button className="attention-row" key={purchase.id} onClick={() => onOpenPurchase(purchase)}>{content}</button>
+              : <div className="attention-row" key={purchase.id}>{content}</div>;
+          })}
           {!unknown && <p className="muted no-attention">No warranty details need review.</p>}
         </section>
       </div>
@@ -279,7 +397,7 @@ function DashboardView({ purchases, onOpenPurchase, onUpload }: {
   );
 }
 
-function PurchaseView({ view, purchases, loading, error, query, sort, setSort, warrantyFilter, setWarrantyFilter, retry, onOpen }: {
+function PurchaseView({ view, purchases, loading, error, query, sort, setSort, warrantyFilter, setWarrantyFilter, retry, onOpen, readOnly = false }: {
   view: string;
   purchases: Receipt[];
   loading: boolean;
@@ -289,8 +407,9 @@ function PurchaseView({ view, purchases, loading, error, query, sort, setSort, w
   setSort: (value: string) => void;
   warrantyFilter: string;
   setWarrantyFilter: (value: string) => void;
-  retry: () => void;
-  onOpen: (purchase: Receipt) => void;
+  retry?: () => void;
+  onOpen?: (purchase: Receipt) => void;
+  readOnly?: boolean;
 }) {
   return (
     <section className="panel purchases-panel">
@@ -310,12 +429,13 @@ function PurchaseView({ view, purchases, loading, error, query, sort, setSort, w
             <option>All</option><option>ACTIVE</option><option>EXPIRING_SOON</option><option>EXPIRED</option><option>UNKNOWN</option><option>NO_WARRANTY</option>
           </select>
           <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort purchases">
-            <option>Newest purchase</option><option>Oldest purchase</option><option>Warranty ending soon</option><option>Recently edited</option>
+            <option>Newest purchase</option><option>Oldest purchase</option><option>Warranty ending soon</option>
+            {!readOnly && <option>Recently edited</option>}
           </select>
         </div>
       </div>
       {loading && <div className="state-card"><span className="spinner" /><strong>Loading purchases</strong></div>}
-      {error && <div className="state-card error-state"><strong>Could not load purchases</strong><button className="secondary" onClick={retry}>Try again</button></div>}
+      {error && <div className="state-card error-state"><strong>Could not load purchases</strong>{retry && <button className="secondary" onClick={retry}>Try again</button>}</div>}
       {!loading && !error && !purchases.length && (
         <div className="state-card">
           <span className="state-icon"><Search size={22} /></span>
@@ -328,12 +448,11 @@ function PurchaseView({ view, purchases, loading, error, query, sort, setSort, w
   );
 }
 
-function PurchaseRow({ purchase, onOpen }: { purchase: Receipt; onOpen: (purchase: Receipt) => void }) {
+function PurchaseRow({ purchase, onOpen }: { purchase: Receipt; onOpen?: (purchase: Receipt) => void }) {
   const status = purchaseWarrantyStatus(purchase);
   const identity = purchase.productName || purchase.brand || purchase.merchantName;
   const identifiers = [purchase.modelNumber, purchase.serialNumber, purchase.sku].filter(Boolean).join(" · ");
-  return (
-    <button className="purchase-row" onClick={() => onOpen(purchase)}>
+  const content = <>
       <span className="purchase-thumb">▣</span>
       <span className="purchase-main">
         <strong>{identity}</strong>
@@ -343,9 +462,11 @@ function PurchaseRow({ purchase, onOpen }: { purchase: Receipt; onOpen: (purchas
         <span className={`warranty-pill ${status.toLowerCase()}`}>{warrantyLabel(status)}</span>
         {purchase.warrantyEndAt && <small>Ends {formatDate(purchase.warrantyEndAt)}</small>}
       </span>
-      <span className="row-arrow">›</span>
-    </button>
-  );
+      {onOpen && <span className="row-arrow">›</span>}
+    </>;
+  return onOpen
+    ? <button className="purchase-row" onClick={() => onOpen(purchase)}>{content}</button>
+    : <div className="purchase-row">{content}</div>;
 }
 
 function AuthScreen({ loading }: { loading?: boolean }) {

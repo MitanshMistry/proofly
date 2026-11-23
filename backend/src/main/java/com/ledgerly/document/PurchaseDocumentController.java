@@ -18,10 +18,12 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import com.ledgerly.history.HistoryEvent;
+import com.ledgerly.history.HistoryEventRepository;
 
 @RestController
 @RequestMapping("/api/purchases")
@@ -29,12 +31,14 @@ public class PurchaseDocumentController {
     private final ReceiptRepository receipts;
     private final PurchaseDocumentRepository documents;
     private final LocalReceiptStorage storage;
+    private final HistoryEventRepository history;
 
     public PurchaseDocumentController(ReceiptRepository receipts, PurchaseDocumentRepository documents,
-                                      LocalReceiptStorage storage) {
+                                      LocalReceiptStorage storage, HistoryEventRepository history) {
         this.receipts = receipts;
         this.documents = documents;
         this.storage = storage;
+        this.history = history;
     }
 
     @GetMapping("/{receiptId}/documents")
@@ -50,14 +54,20 @@ public class PurchaseDocumentController {
                                    @RequestParam("file") MultipartFile file,
                                    @RequestParam(value = "documentType", defaultValue = "SUPPORTING") String documentType) {
         Receipt receipt = ownedReceipt(account, receiptId);
+        StoredFile stored = null;
         try {
-            StoredFile stored = storage.store(file);
+            stored = storage.store(file);
             PurchaseDocument document = documents.save(new PurchaseDocument(
                     receipt.getId(), stored.objectKey(), stored.mimeType(), documentType,
                     stored.sizeBytes(), stored.sha256()));
+            history.save(new HistoryEvent(account.getId(), receipt.getId(), "DOCUMENT_UPLOADED",
+                    documentType + " document uploaded"));
             return DocumentResponse.from(document);
         } catch (IOException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage());
+        } catch (RuntimeException exception) {
+            if (stored != null) storage.delete(stored.objectKey());
+            throw exception;
         }
     }
 
@@ -90,6 +100,8 @@ public class PurchaseDocumentController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found"));
         documents.delete(document);
         storage.delete(document.getObjectKey());
+        history.save(new HistoryEvent(account.getId(), receiptId, "DOCUMENT_DELETED",
+                document.getDocumentType() + " document deleted"));
     }
 
     private Receipt ownedReceipt(UserAccount account, UUID receiptId) {

@@ -1,11 +1,9 @@
 package com.ledgerly.history;
 
 import com.ledgerly.auth.UserAccount;
-import com.ledgerly.receipt.Receipt;
-import com.ledgerly.receipt.ReceiptRepository;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.time.Instant;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,21 +12,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/history")
 public class HistoryController {
-    private final ReceiptRepository receipts;
+    private final HistoryEventRepository history;
 
-    public HistoryController(ReceiptRepository receipts) {
-        this.receipts = receipts;
+    public HistoryController(HistoryEventRepository history) {
+        this.history = history;
     }
 
     @GetMapping
     public List<HistoryResponse> list(@AuthenticationPrincipal UserAccount account) {
-        return receipts.findByUserIdOrderByPurchasedAtDesc(account.getId()).stream()
-                .map(receipt -> new HistoryResponse(
-                        receipt.getId(),
-                        "RECEIPT_SAVED",
-                        "Receipt saved for " + (receipt.getNotes() == null ? "Needs review" : receipt.getNotes()),
-                        receipt.getCreatedAt()))
-                .sorted((left, right) -> right.createdAt().compareTo(left.createdAt()))
+        return history.findByUserIdOrderByCreatedAtDesc(account.getId()).stream()
+                .map(event -> new HistoryResponse(
+                        event.getReceiptId(),
+                        event.getEventType(),
+                        event.getDescription(),
+                        event.getCreatedAt()))
                 .toList();
     }
 
